@@ -72,6 +72,10 @@ export default function ProfileScreen() {
       {/* Settings section */}
       <Text style={styles.sectionTitle}>{t('profile.settings')}</Text>
 
+      {profile.role === 'artist' && (
+        <MenuRow icon="hardware-chip-outline" label="AI Music Studio" onPress={() => router.push('/ai-studio')} />
+      )}
+
       <MenuRow icon="person-outline" label={t('profile.edit_profile')} onPress={() => router.push('/settings/edit-profile')} />
       <MenuRow icon="notifications-outline" label={t('profile.notifications')} onPress={() => router.push('/settings/notifications')} />
       <MenuRow icon="language-outline" label={t('settings.language')} onPress={() => router.push('/settings/language')} />
