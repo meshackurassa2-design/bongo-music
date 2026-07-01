@@ -1,17 +1,20 @@
 import { create } from 'zustand';
-import TrackPlayer, { Capability, AppKilledPlaybackBehavior, State, Event, Track as TPTrack } from 'react-native-track-player';
+import { Audio, AVPlaybackStatus } from 'expo-av';
 import { Track } from '../constants';
 import { useOfflineStore } from './offlineStore';
+import { supabase } from '../lib/supabase';
 
 type PlayerStore = {
   currentTrack: Track | null;
   queue: Track[];
-  isPlayerReady: boolean;
+  isPlaying: boolean;
   hasCountedPlay: boolean;
+  positionMs: number;
+  durationMs: number;
   isShuffled: boolean;
   repeatOne: boolean;
+  sound: Audio.Sound | null;
   // Actions
-  setupPlayer: () => Promise<void>;
   playTrack: (track: Track, queue?: Track[]) => Promise<void>;
   togglePlayPause: () => Promise<void>;
   skipNext: () => Promise<void>;
@@ -19,70 +22,101 @@ type PlayerStore = {
   seekTo: (ms: number) => Promise<void>;
   toggleShuffle: () => void;
   toggleRepeat: () => void;
-  markPlayCounted: () => void;
   cleanup: () => Promise<void>;
 };
 
 export const usePlayerStore = create<PlayerStore>((set, get) => ({
   currentTrack: null,
   queue: [],
-  isPlayerReady: false,
+  isPlaying: false,
   hasCountedPlay: false,
+  positionMs: 0,
+  durationMs: 0,
   isShuffled: false,
   repeatOne: false,
+  sound: null,
 
-  setupPlayer: async () => {
-    if (get().isPlayerReady) return;
+  playTrack: async (track, queue = [track]) => {
+    const { sound: prevSound } = get();
+    
+    // Update UI instantly to new track
+    set({ currentTrack: track, queue, hasCountedPlay: false, isPlaying: true });
+
+    if (prevSound) {
+      try {
+        await prevSound.unloadAsync();
+      } catch (e) {}
+    }
+
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      staysActiveInBackground: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+
+    const localUri = useOfflineStore.getState().getLocalUri(track.id);
+    const audioSource = localUri ? { uri: localUri } : { uri: track.audio_url };
+
     try {
-      await TrackPlayer.setupPlayer();
-      await TrackPlayer.updateOptions({
-        android: {
-          appKilledPlaybackBehavior: AppKilledPlaybackBehavior.StopPlaybackAndRemoveNotification,
-        },
-        capabilities: [
-          Capability.Play,
-          Capability.Pause,
-          Capability.SkipToNext,
-          Capability.SkipToPrevious,
-          Capability.SeekTo,
-        ],
-        compactCapabilities: [Capability.Play, Capability.Pause, Capability.SkipToNext],
+      const { sound, status } = await Audio.Sound.createAsync(
+        audioSource,
+        { shouldPlay: true, progressUpdateIntervalMillis: 500 },
+        (status: AVPlaybackStatus) => {
+          if (status.isLoaded) {
+            set({
+              positionMs: status.positionMillis,
+              durationMs: status.durationMillis ?? 0,
+              isPlaying: status.isPlaying,
+            });
+
+            // 30-second play counter for monetization
+            const { hasCountedPlay, currentTrack } = get();
+            if (currentTrack && !hasCountedPlay && status.positionMillis >= 30000) {
+              set({ hasCountedPlay: true });
+              supabase.rpc('increment_play_count', { track_id: currentTrack.id }).then(({ error }) => {
+                if (error) console.error("Failed to increment play count:", error);
+              });
+            }
+
+            // Auto-advance to next track
+            if (status.didJustFinish) {
+              if (get().repeatOne) {
+                sound.replayAsync();
+              } else {
+                get().skipNext();
+              }
+            }
+          }
+        }
+      );
+
+      // If user tapped a different track while this one was loading, discard this sound
+      if (get().currentTrack?.id !== track.id) {
+        sound.unloadAsync();
+        return;
+      }
+
+      set({
+        sound,
+        isPlaying: true,
       });
-      set({ isPlayerReady: true });
     } catch (e) {
-      console.log('Player already setup or error:', e);
-      set({ isPlayerReady: true });
+      console.error("Failed to load sound", e);
     }
   },
 
-  playTrack: async (track, queue = [track]) => {
-    const { isPlayerReady, setupPlayer } = get();
-    if (!isPlayerReady) await setupPlayer();
-
-    set({ currentTrack: track, queue, hasCountedPlay: false });
-
-    const localUri = useOfflineStore.getState().getLocalUri(track.id);
-    const audioUrl = localUri ? localUri : track.audio_url;
-
-    const tpTrack: TPTrack = {
-      id: track.id,
-      url: audioUrl,
-      title: track.title,
-      artist: track.profile?.display_name || 'Unknown Artist',
-      artwork: track.cover_url || 'https://via.placeholder.com/150',
-    };
-
-    await TrackPlayer.reset();
-    await TrackPlayer.add([tpTrack]);
-    await TrackPlayer.play();
-  },
-
   togglePlayPause: async () => {
-    const state = await TrackPlayer.getPlaybackState();
-    if (state.state === State.Playing) {
-      await TrackPlayer.pause();
+    const { sound, isPlaying } = get();
+    if (!sound) return;
+    
+    set({ isPlaying: !isPlaying });
+    
+    if (isPlaying) {
+      await sound.pauseAsync();
     } else {
-      await TrackPlayer.play();
+      await sound.playAsync();
     }
   },
 
@@ -100,31 +134,31 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   },
 
   skipPrev: async () => {
-    const { queue, currentTrack, playTrack } = get();
+    const { queue, currentTrack, positionMs, playTrack } = get();
+    const { sound } = get();
     if (!currentTrack) return;
-    
-    const position = await TrackPlayer.getProgress();
-    if (position.position > 3) {
-      await TrackPlayer.seekTo(0);
+    // If > 3s in, restart current track
+    if (positionMs > 3000 && sound) {
+      await sound.setPositionAsync(0);
       return;
     }
-
     const currentIdx = queue.findIndex(t => t.id === currentTrack.id);
     const prevIdx = currentIdx > 0 ? currentIdx - 1 : queue.length - 1;
     await playTrack(queue[prevIdx], queue);
   },
 
   seekTo: async (ms: number) => {
-    await TrackPlayer.seekTo(ms / 1000); // TrackPlayer uses seconds!
+    const { sound } = get();
+    if (!sound) return;
+    await sound.setPositionAsync(ms);
   },
 
   toggleShuffle: () => set(s => ({ isShuffled: !s.isShuffled })),
   toggleRepeat: () => set(s => ({ repeatOne: !s.repeatOne })),
-  
-  markPlayCounted: () => set({ hasCountedPlay: true }),
 
   cleanup: async () => {
-    await TrackPlayer.reset();
-    set({ currentTrack: null });
+    const { sound } = get();
+    if (sound) await sound.unloadAsync();
+    set({ sound: null, currentTrack: null, isPlaying: false });
   },
 }));

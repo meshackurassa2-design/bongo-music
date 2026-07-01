@@ -6,10 +6,10 @@ import { Image } from 'expo-image';
 import { COLORS } from '../constants';
 import { useAIStore, AISongTask } from '../store/aiStore';
 import { generateMusic, getTaskInfo, SunoAudioData } from '../lib/sunoApi';
-import TrackPlayer, { Track as TPTrack } from 'react-native-track-player';
 import * as FileSystem from 'expo-file-system';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
+import { usePlayerStore } from '../store/playerStore';
 
 export default function AIStudioScreen() {
   const router = useRouter();
@@ -109,16 +109,16 @@ function TaskItem({ task }: { task: AISongTask }) {
   }, [task.status]);
 
   const handlePlay = async (track: SunoAudioData) => {
-    const tpTrack: TPTrack = {
+    const aiTrack = {
       id: track.id,
-      url: track.audioUrl,
+      audio_url: track.audioUrl,
       title: track.title || task.title,
-      artist: 'AI Generated',
-      artwork: track.imageUrl || 'https://via.placeholder.com/150',
+      artist_name: 'AI Generated',
+      cover_url: track.imageUrl || 'https://via.placeholder.com/150',
+      duration: Math.floor(track.duration || 0),
+      play_count: 0
     };
-    await TrackPlayer.reset();
-    await TrackPlayer.add([tpTrack]);
-    await TrackPlayer.play();
+    await usePlayerStore.getState().playTrack(aiTrack as any);
   };
 
   const handlePublish = async (track: SunoAudioData) => {
