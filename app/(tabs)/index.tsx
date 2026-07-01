@@ -1,0 +1,227 @@
+import React, { useCallback, useState } from 'react';
+import {
+  View, Text, ScrollView, StyleSheet, TouchableOpacity,
+  FlatList, ImageBackground, Dimensions, ActivityIndicator
+} from 'react-native';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { supabase } from '../../lib/supabase';
+import { COLORS, GENRES, Track, Profile, Playlist } from '../../constants';
+import { usePlayerStore } from '../../store/playerStore';
+import { useTranslation } from 'react-i18next';
+import TrackItem from '../../components/TrackItem';
+import { getGreeting } from '../../utils/helpers';
+
+const { width } = Dimensions.get('window');
+
+export default function HomeScreen() {
+  const router = useRouter();
+  const { t } = useTranslation();
+  const playTrack = usePlayerStore(s => s.playTrack);
+  const currentTrack = usePlayerStore(s => s.currentTrack);
+
+  const [trending, setTrending] = useState<Track[]>([]);
+  const [newReleases, setNewReleases] = useState<Track[]>([]);
+  const [artists, setArtists] = useState<Profile[]>([]);
+  const [albums, setAlbums] = useState<Playlist[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadData();
+    }, [])
+  );
+
+  const loadData = async () => {
+    setLoading(true);
+    const [trendRes, newRes, artistsRes, albumsRes] = await Promise.all([
+      supabase.from('tracks').select('*, profile:profiles!tracks_user_id_fkey(*)').eq('is_public', true).order('play_count', { ascending: false }).limit(10),
+      supabase.from('tracks').select('*, profile:profiles!tracks_user_id_fkey(*)').eq('is_public', true).order('created_at', { ascending: false }).limit(10),
+      supabase.from('profiles').select('*').eq('role', 'artist').order('follower_count', { ascending: false }).limit(10),
+      supabase.from('playlists').select('id, title, cover_url, track_count').eq('is_public', true).order('track_count', { ascending: false }).limit(10),
+    ]);
+    if (trendRes.data) setTrending(trendRes.data as Track[]);
+    if (newRes.data) setNewReleases(newRes.data as Track[]);
+    if (artistsRes.data) setArtists(artistsRes.data as Profile[]);
+    if (albumsRes.data) setAlbums(albumsRes.data as Playlist[]);
+    setLoading(false);
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loader}>
+        <ActivityIndicator size="large" color={COLORS.gold} />
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 160 }}>
+      {/* Header */}
+      <LinearGradient colors={[COLORS.gold + '33', 'transparent']} style={styles.header}>
+        <Text style={styles.greeting}>{getGreeting()}</Text>
+        <Text style={styles.appName}>BONGO STREAM</Text>
+      </LinearGradient>
+
+      {/* Sleek Genres (Pills) */}
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>{t('home.genres')}</Text>
+      </View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.genrePills}>
+        {GENRES.map(g => (
+          <TouchableOpacity
+            key={g.name}
+            style={styles.genrePill}
+            onPress={() => router.push({ pathname: '/genre/[name]', params: { name: g.name } })}
+          >
+            <Text style={styles.genrePillText}>{g.name}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
+
+      {/* Trending Songs */}
+      {trending.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{t('home.trending_songs')}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScroll}>
+            {trending.map(track => (
+              <TouchableOpacity
+                key={track.id}
+                style={styles.hTrackCard}
+                activeOpacity={0.8}
+                onPress={() => playTrack(track, trending)}
+              >
+                <Image
+                  source={{ uri: track.cover_url || undefined }}
+                  style={styles.hTrackImage}
+                  transition={200} cachePolicy="memory-disk"
+                />
+                {currentTrack?.id === track.id && (
+                  <View style={styles.hTrackPlayingOverlay}>
+                    <Ionicons name="stats-chart" size={24} color={COLORS.gold} />
+                  </View>
+                )}
+                <Text style={styles.hTrackTitle} numberOfLines={1}>{track.title}</Text>
+                <Text style={styles.hTrackArtist} numberOfLines={1}>{track.artist_name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Trending Artists */}
+      {artists.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>{t('home.trending_artists')}</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScroll}>
+            {artists.map(artist => (
+              <TouchableOpacity
+                key={artist.id}
+                style={styles.artistCircle}
+                onPress={() => router.push({ pathname: '/artist/[id]', params: { id: artist.id } })}
+              >
+                {artist.avatar_url ? (
+                  <Image source={{ uri: artist.avatar_url }} style={styles.artistImage} transition={200} cachePolicy="memory-disk" />
+                ) : (
+                  <View style={[styles.artistImage, { backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center' }]}>
+                    <Ionicons name="person" size={40} color={COLORS.textTertiary} />
+                  </View>
+                )}
+                <Text style={styles.artistName} numberOfLines={1}>
+                  {artist.display_name} {artist.is_verified ? <Ionicons name="checkmark-circle" size={12} color={COLORS.gold} /> : null}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Trending Albums / Playlists */}
+      {albums.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Albamu Moto</Text>
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.hScroll}>
+            {albums.map(album => (
+              <TouchableOpacity key={album.id} style={styles.albumCard}>
+                <Image source={{ uri: album.cover_url || undefined }} style={styles.albumImage} transition={200} cachePolicy="memory-disk" />
+                <Text style={styles.albumTitle} numberOfLines={1}>{album.title}</Text>
+                <Text style={styles.albumSubtitle}>{album.track_count} Nyimbo</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {/* Hot New Releases */}
+      {newReleases.length > 0 && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Mpya Uliotolewa</Text>
+          </View>
+          {newReleases.map(track => (
+            <TrackItem
+              key={track.id}
+              track={track}
+              isPlaying={currentTrack?.id === track.id}
+              onPress={() => playTrack(track, newReleases)}
+              onArtistPress={() => router.push({ pathname: '/artist/[id]', params: { id: track.user_id } })}
+            />
+          ))}
+        </View>
+      )}
+
+      {trending.length === 0 && newReleases.length === 0 && (
+        <View style={styles.empty}>
+          <Ionicons name="musical-notes" size={64} color={COLORS.textSecondary} style={{ marginBottom: 12 }} />
+          <Text style={styles.emptyTitle}>Hakuna Nyimbo Bado</Text>
+          <Text style={styles.emptyText}>Kuwa wa kwanza kupakia wimbo!</Text>
+        </View>
+      )}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.black },
+  loader: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: COLORS.black },
+  header: { paddingHorizontal: 20, paddingTop: 60, paddingBottom: 20 },
+  greeting: { color: COLORS.textSecondary, fontSize: 13, marginBottom: 4 },
+  appName: { color: COLORS.gold, fontSize: 26, fontWeight: '900', letterSpacing: 2 },
+  
+  section: { marginTop: 10, marginBottom: 16 },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, marginBottom: 12 },
+  sectionTitle: { color: COLORS.textPrimary, fontSize: 18, fontWeight: '800' },
+  
+  genrePills: { paddingHorizontal: 16, gap: 10, marginBottom: 20 },
+  genrePill: { paddingHorizontal: 18, paddingVertical: 10, backgroundColor: COLORS.card, borderRadius: 20, borderWidth: 1, borderColor: COLORS.divider },
+  genrePillText: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '600' },
+  
+  hScroll: { paddingHorizontal: 16, gap: 16 },
+  
+  hTrackCard: { width: 140 },
+  hTrackImage: { width: 140, height: 140, borderRadius: 12, backgroundColor: COLORS.cardAlt },
+  hTrackPlayingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  hTrackTitle: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '700', marginTop: 8 },
+  hTrackArtist: { color: COLORS.textSecondary, fontSize: 12, marginTop: 2 },
+  
+  artistCircle: { alignItems: 'center', width: 90 },
+  artistImage: { width: 80, height: 80, borderRadius: 40, marginBottom: 8 },
+  artistName: { color: COLORS.textPrimary, fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  
+  albumCard: { width: 160 },
+  albumImage: { width: 160, height: 160, borderRadius: 8, backgroundColor: COLORS.cardAlt, marginBottom: 8 },
+  albumTitle: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '700' },
+  albumSubtitle: { color: COLORS.textTertiary, fontSize: 12, marginTop: 2 },
+  
+  empty: { alignItems: 'center', paddingVertical: 60 },
+  emptyTitle: { color: COLORS.textPrimary, fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  emptyText: { color: COLORS.textSecondary, fontSize: 14 },
+});
