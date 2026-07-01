@@ -33,6 +33,7 @@ export const generateMusic = async (prompt: string, tags: string, title: string)
       customMode: true,
       instrumental: false,
       model: "V4_5ALL",
+      callBackUrl: "https://httpbin.org/post",
     }),
   });
 
@@ -45,7 +46,7 @@ export const generateMusic = async (prompt: string, tags: string, title: string)
   const taskId = json.data?.taskId || json.taskId;
   
   if (!taskId) {
-     throw new Error("No taskId returned from Suno API");
+     throw new Error(json.msg || "No taskId returned from Suno API");
   }
   return taskId;
 };
