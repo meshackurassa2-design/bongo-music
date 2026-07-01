@@ -43,10 +43,19 @@ export const generateMusic = async (prompt: string, tags: string, title: string)
   }
 
   const json = await response.json();
-  const taskId = json.data?.taskId || json.taskId;
+  
+  let taskId;
+  if (typeof json.data === 'string') {
+    taskId = json.data;
+  } else if (json.data && json.data.taskId) {
+    taskId = json.data.taskId;
+  } else {
+    taskId = json.taskId;
+  }
   
   if (!taskId) {
-     throw new Error(json.msg || "No taskId returned from Suno API");
+     console.error("Suno API full response:", json);
+     throw new Error(json.msg || "No taskId returned. Check console for full response.");
   }
   return taskId;
 };
