@@ -1,29 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { decode } from 'base64-arraybuffer';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { COLORS } from '../constants';
-import { useAIStore, AISongTask } from '../store/aiStore';
-import { generateMusic, getTaskInfo, SunoAudioData } from '../lib/sunoApi';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import { supabase } from '../lib/supabase';
+import { generateMusic, getTaskInfo, SunoAudioData, SunoTaskStatus } from '../lib/sunoApi';
+import { useAIStore, AISongTask } from '../store/aiStore';
 import { useAuthStore } from '../store/authStore';
 import { usePlayerStore } from '../store/playerStore';
+import { COLORS } from '../constants';
+import MiniPlayer from '../components/MiniPlayer';
 
 export default function AIStudioScreen() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<'create' | 'workspace'>('create');
-
+  
   // Create Form State
   const [title, setTitle] = useState('');
   const [style, setStyle] = useState('');
   const [lyrics, setLyrics] = useState('');
+  const [activeTab, setActiveTab] = useState<'Create' | 'Workspace'>('Create');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isPublishing, setIsPublishing] = useState<Record<string, boolean>>({});
+  const [isDownloading, setIsDownloading] = useState<Record<string, boolean>>({});
 
   const { tasks, addTask, updateTask, removeTask } = useAIStore();
-  const { session } = useAuthStore();
+  const { session, profile } = useAuthStore();
+
+  const currentTrack = usePlayerStore(s => s.currentTrack);
 
   const handleGenerate = async () => {
     if (!title || !style || !lyrics) {
@@ -37,7 +44,7 @@ export default function AIStudioScreen() {
       setTitle('');
       setStyle('');
       setLyrics('');
-      setActiveTab('workspace');
+      setActiveTab('Workspace');
     } catch (e: any) {
       Alert.alert("Error", e.message);
     } finally {
@@ -60,15 +67,15 @@ export default function AIStudioScreen() {
       
       {/* Tabs */}
       <View style={styles.tabContainer}>
-        <TouchableOpacity style={[styles.tab, activeTab === 'create' && styles.activeTab]} onPress={() => setActiveTab('create')}>
-          <Text style={[styles.tabText, activeTab === 'create' && styles.activeTabText]}>Create</Text>
+        <TouchableOpacity style={[styles.tab, activeTab === 'Create' && styles.activeTab]} onPress={() => setActiveTab('Create')}>
+          <Text style={[styles.tabText, activeTab === 'Create' && styles.activeTabText]}>Create</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.tab, activeTab === 'workspace' && styles.activeTab]} onPress={() => setActiveTab('workspace')}>
-          <Text style={[styles.tabText, activeTab === 'workspace' && styles.activeTabText]}>Workspace</Text>
+        <TouchableOpacity style={[styles.tab, activeTab === 'Workspace' && styles.activeTab]} onPress={() => setActiveTab('Workspace')}>
+          <Text style={[styles.tabText, activeTab === 'Workspace' && styles.activeTabText]}>Workspace</Text>
         </TouchableOpacity>
       </View>
 
-      {activeTab === 'create' ? (
+      {activeTab === 'Create' ? (
         <ScrollView style={styles.content} contentContainerStyle={{ padding: 16 }}>
           <Text style={styles.label}>Song Title</Text>
           <TextInput style={styles.input} placeholder="e.g. Midnight Memories" placeholderTextColor={COLORS.textTertiary} value={title} onChangeText={setTitle} />
@@ -88,17 +95,29 @@ export default function AIStudioScreen() {
           {tasks.length === 0 ? (
             <Text style={styles.emptyText}>Your workspace is empty.</Text>
           ) : (
-            tasks.map(task => <TaskItem key={task.taskId} task={task} />)
+            tasks.map(task => (
+              <TaskItem 
+                key={task.taskId} 
+                task={task} 
+                isPublishing={isPublishing} 
+                setIsPublishing={setIsPublishing} 
+                isDownloading={isDownloading} 
+                setIsDownloading={setIsDownloading} 
+              />
+            ))
           )}
         </ScrollView>
       )}
+      
+      {/* Show global MiniPlayer if a song is playing */}
+      {currentTrack && <MiniPlayer />}
     </SafeAreaView>
   );
 }
 
-function TaskItem({ task }: { task: AISongTask }) {
+function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDownloading }: { task: AISongTask, isPublishing: any, setIsPublishing: any, isDownloading: any, setIsDownloading: any }) {
   const { updateTask, removeTask } = useAIStore();
-  const [isPublishing, setIsPublishing] = useState<Record<string, boolean>>({});
+  const [pollError, setPollError] = useState<string | null>(null);
 
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -106,17 +125,44 @@ function TaskItem({ task }: { task: AISongTask }) {
       interval = setInterval(async () => {
         try {
           const info = await getTaskInfo(task.taskId);
-          // If status changed or tracks came in
-          if (info.status !== task.status || (info.data && info.data.length > 0 && !task.tracks)) {
-             updateTask(task.taskId, info.status, info.data);
+          setPollError(null);
+          
+          const hasTracks = info.data && info.data.length > 0 && (info.data[0].audioUrl || info.data[0].streamAudioUrl);
+          
+          if (hasTracks) {
+             const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl }));
+             updateTask(task.taskId, 'SUCCESS', mappedData);
+          } else if (info.status === 'SENSITIVE_WORD_ERROR') {
+             updateTask(task.taskId, 'SENSITIVE_WORD_ERROR');
+          } else if (info.status === 'FAILED' || info.status?.includes('ERROR')) {
+             updateTask(task.taskId, 'FAILED');
+          } else if (info.status === 'SUCCESS' && !hasTracks) {
+             updateTask(task.taskId, 'FAILED');
           }
-        } catch (e) {
-          console.error("Polling error", e);
+        } catch (e: any) {
+          setPollError(e.message || "Network error");
         }
-      }, 10000); // poll every 10 seconds
+      }, 10000);
     }
     return () => clearInterval(interval);
   }, [task.status]);
+
+  const manualCheck = async () => {
+    try {
+      const info = await getTaskInfo(task.taskId);
+      const hasTracks = info.data && info.data.length > 0 && (info.data[0].audioUrl || info.data[0].streamAudioUrl);
+      if (hasTracks) {
+        const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl }));
+        updateTask(task.taskId, 'SUCCESS', mappedData);
+      } else if (info.status === 'SENSITIVE_WORD_ERROR') {
+        updateTask(task.taskId, 'SENSITIVE_WORD_ERROR');
+      } else if (info.status === 'FAILED' || (info.status === 'SUCCESS' && !hasTracks)) {
+        updateTask(task.taskId, 'FAILED');
+      }
+    } catch (e: any) {
+      Alert.alert("Error", e.message);
+    }
+  };
 
   const handlePlay = async (track: SunoAudioData) => {
     const aiTrack = {
@@ -132,52 +178,64 @@ function TaskItem({ task }: { task: AISongTask }) {
   };
 
   const handlePublish = async (track: SunoAudioData) => {
-    setIsPublishing(prev => ({ ...prev, [track.id]: true }));
+    setIsPublishing((prev: any) => ({ ...prev, [track.id]: true }));
     try {
-      const { session } = useAuthStore.getState();
+      const { session, profile } = useAuthStore.getState();
       if (!session) throw new Error("Not logged in");
       
-      // 1. Download file to memory/cache
       const localAudioUri = FileSystem.cacheDirectory + `${track.id}.mp3`;
       await FileSystem.downloadAsync(track.audioUrl, localAudioUri);
       
       const localCoverUri = FileSystem.cacheDirectory + `${track.id}.jpg`;
       await FileSystem.downloadAsync(track.imageUrl, localCoverUri);
 
-      // 2. Upload to Supabase Storage
-      const audioFormData = new FormData();
-      audioFormData.append('file', { uri: localAudioUri, name: `${track.id}.mp3`, type: 'audio/mpeg' } as any);
-      
-      const { data: audioData, error: audioErr } = await supabase.storage.from('audio').upload(`ai_tracks/${track.id}.mp3`, audioFormData);
+      const audioBase64 = await FileSystem.readAsStringAsync(localAudioUri, { encoding: FileSystem.EncodingType.Base64 });
+      const coverBase64 = await FileSystem.readAsStringAsync(localCoverUri, { encoding: FileSystem.EncodingType.Base64 });
+
+      const { data: audioData, error: audioErr } = await supabase.storage.from('audio').upload(`ai_tracks/${track.id}.mp3`, decode(audioBase64), { contentType: 'audio/mpeg' });
       if (audioErr) throw audioErr;
 
-      const coverFormData = new FormData();
-      coverFormData.append('file', { uri: localCoverUri, name: `${track.id}.jpg`, type: 'image/jpeg' } as any);
-      
-      const { data: coverData, error: coverErr } = await supabase.storage.from('images').upload(`ai_covers/${track.id}.jpg`, coverFormData);
+      const { data: coverData, error: coverErr } = await supabase.storage.from('images').upload(`ai_covers/${track.id}.jpg`, decode(coverBase64), { contentType: 'image/jpeg' });
       if (coverErr) throw coverErr;
 
-      // 3. Get Public URLs
-      const audioPublicUrl = supabase.storage.from('audio').getPublicUrl(audioData.path).data.publicUrl;
-      const coverPublicUrl = supabase.storage.from('images').getPublicUrl(coverData.path).data.publicUrl;
+      const audioPublicUrl = supabase.storage.from('audio').getPublicUrl(`ai_tracks/${track.id}.mp3`).data.publicUrl;
+      const coverPublicUrl = supabase.storage.from('images').getPublicUrl(`ai_covers/${track.id}.jpg`).data.publicUrl;
 
-      // 4. Insert into 'tracks' table
       const { error: dbErr } = await supabase.from('tracks').insert({
-        id: track.id,
+        user_id: session.user.id,
+        artist_name: profile?.display_name || session.user.user_metadata?.display_name || 'AI Artist',
         title: track.title || task.title,
-        artist_id: session.user.id,
         audio_url: audioPublicUrl,
         cover_url: coverPublicUrl,
-        duration: Math.floor(track.duration || 0),
-        play_count: 0
+        duration_sec: Math.floor(track.duration || 0),
+        play_count: 0,
+        is_public: true
       });
       if (dbErr) throw dbErr;
 
-      Alert.alert("Success!", "Your AI song has been published to your fans!");
+      Alert.alert("Success", "Song published to your profile!");
     } catch (e: any) {
       Alert.alert("Publish Error", e.message);
     } finally {
-      setIsPublishing(prev => ({ ...prev, [track.id]: false }));
+      setIsPublishing((prev: any) => ({ ...prev, [track.id]: false }));
+    }
+  };
+
+  const handleDownload = async (track: SunoAudioData) => {
+    setIsDownloading((prev: any) => ({ ...prev, [track.id]: true }));
+    try {
+      const localAudioUri = FileSystem.documentDirectory + `${(track.title || 'AI_Song').replace(/[^a-z0-9]/gi, '_')}.mp3`;
+      await FileSystem.downloadAsync(track.audioUrl, localAudioUri);
+      
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(localAudioUri);
+      } else {
+        Alert.alert("Error", "Sharing is not available on this device.");
+      }
+    } catch (e: any) {
+      Alert.alert("Download Error", e.message);
+    } finally {
+      setIsDownloading((prev: any) => ({ ...prev, [track.id]: false }));
     }
   };
 
@@ -193,11 +251,20 @@ function TaskItem({ task }: { task: AISongTask }) {
       {task.status === 'PENDING' || task.status === 'PROCESSING' ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={COLORS.gold} size="small" />
-          <Text style={styles.statusText}>AI is composing... (Takes ~30 seconds)</Text>
+          <View style={{ flex: 1, marginLeft: 12 }}>
+            <Text style={styles.statusText}>
+              {pollError ? `Retrying... (${pollError})` : 'AI is composing...'}
+            </Text>
+          </View>
+          <TouchableOpacity onPress={manualCheck} style={{ padding: 8, backgroundColor: COLORS.cardAlt, borderRadius: 8 }}>
+            <Text style={{ color: COLORS.gold, fontSize: 12, fontWeight: 'bold' }}>CHECK</Text>
+          </TouchableOpacity>
         </View>
+      ) : task.status === 'SENSITIVE_WORD_ERROR' ? (
+        <Text style={[styles.statusText, { color: COLORS.error }]}>Generation Failed: Sensitive words.</Text>
       ) : task.status === 'FAILED' ? (
         <Text style={[styles.statusText, { color: COLORS.error }]}>Generation Failed.</Text>
-      ) : task.tracks ? (
+      ) : Array.isArray(task.tracks) && task.tracks.length > 0 ? (
         task.tracks.map(track => (
           <View key={track.id} style={styles.trackRow}>
             <Image source={{ uri: track.imageUrl }} style={styles.trackImg} cachePolicy="memory-disk" />
@@ -208,6 +275,13 @@ function TaskItem({ task }: { task: AISongTask }) {
                     <Ionicons name="play" size={16} color={COLORS.black} />
                     <Text style={styles.actionText}>Play</Text>
                   </TouchableOpacity>
+                  
+                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.cardAlt, flex: 0.5 }]} onPress={() => handleDownload(track)}>
+                    {isDownloading[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
+                      <Ionicons name="download" size={16} color={COLORS.textPrimary} />
+                    )}
+                  </TouchableOpacity>
+
                   <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.cardAlt }]} onPress={() => handlePublish(track)}>
                     {isPublishing[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
                       <>
@@ -220,7 +294,9 @@ function TaskItem({ task }: { task: AISongTask }) {
             </View>
           </View>
         ))
-      ) : null}
+      ) : (
+        <Text style={styles.statusText}>Formatting tracks...</Text>
+      )}
     </View>
   );
 }

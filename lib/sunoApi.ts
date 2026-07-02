@@ -1,7 +1,7 @@
-const API_KEY = '2a755692ef522083ec0872d146f75cb9';
+const API_KEY = '13f2a0b42e2ef8af321d5151b9c2f532';
 const BASE_URL = 'https://api.sunoapi.org/api/v1';
 
-export type SunoTaskStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED';
+export type SunoTaskStatus = 'PENDING' | 'PROCESSING' | 'SUCCESS' | 'FAILED' | 'SENSITIVE_WORD_ERROR';
 
 export interface SunoAudioData {
   id: string;
@@ -74,5 +74,15 @@ export const getTaskInfo = async (taskId: string): Promise<SunoTaskResponse> => 
   }
 
   const json = await response.json();
-  return json;
+  
+  if (json.code !== 200 || !json.data) {
+    throw new Error(json.msg || "Failed to fetch task info");
+  }
+
+  const taskData = json.data;
+  return {
+    taskId: taskData.taskId,
+    status: taskData.status,
+    data: taskData.response?.sunoData || [],
+  };
 };
