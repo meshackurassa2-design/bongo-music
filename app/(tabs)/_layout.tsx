@@ -51,10 +51,10 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="library"
+          name="ai-studio"
           options={{
-            title: t('tabs.library'),
-            tabBarIcon: ({ color }) => <TabBarIcon name="library" color={color} />,
+            title: "AI Studio",
+            tabBarIcon: ({ color }) => <TabBarIcon name="color-wand" color={color} />,
           }}
         />
         <Tabs.Screen

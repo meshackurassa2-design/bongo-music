@@ -65,14 +65,18 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
         { shouldPlay: true, progressUpdateIntervalMillis: 500 },
         (status: AVPlaybackStatus) => {
           if (status.isLoaded) {
+            const currentTrack = get().currentTrack as any;
+            const trackSeconds = currentTrack?.duration_sec || currentTrack?.duration || 0;
+            const fallbackDuration = trackSeconds * 1000;
+            
             set({
               positionMs: status.positionMillis,
-              durationMs: status.durationMillis ?? 0,
+              durationMs: status.durationMillis || fallbackDuration,
               isPlaying: status.isPlaying,
             });
 
             // 30-second play counter for monetization
-            const { hasCountedPlay, currentTrack } = get();
+            const { hasCountedPlay } = get();
             if (currentTrack && !hasCountedPlay && status.positionMillis >= 30000) {
               set({ hasCountedPlay: true });
               supabase.rpc('increment_play_count', { track_id: currentTrack.id }).then(({ error }) => {

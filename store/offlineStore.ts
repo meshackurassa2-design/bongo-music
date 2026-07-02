@@ -1,8 +1,7 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as FileSystem from 'expo-file-system';
-import { createDownloadResumable } from 'expo-file-system/legacy';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Track } from '../constants';
 
 type OfflineStore = {
@@ -36,7 +35,7 @@ export const useOfflineStore = create<OfflineStore>()(
           const ext = track.audio_url.split('.').pop()?.split('?')[0] || 'mp3';
           const fileUri = `${FileSystem.documentDirectory}track_${track.id}.${ext}`;
           
-          const downloadResumable = createDownloadResumable(
+          const downloadResumable = FileSystem.createDownloadResumable(
             track.audio_url,
             fileUri,
             {},

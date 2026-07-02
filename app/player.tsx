@@ -101,7 +101,7 @@ export default function PlayerScreen() {
         <Slider
           style={styles.slider}
           minimumValue={0}
-          maximumValue={durationMs || 1}
+          maximumValue={Math.max(durationMs || 1, positionMs + 1)}
           value={positionMs}
           onSlidingComplete={seekTo}
           minimumTrackTintColor={COLORS.gold}

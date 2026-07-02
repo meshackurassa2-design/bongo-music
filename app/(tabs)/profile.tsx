@@ -50,6 +50,8 @@ export default function ProfileScreen() {
           <StatItem label={t('profile.following')} value={profile.following_count} />
           <View style={styles.statDivider} />
           <StatItem label={t('profile.songs')} value={profile.track_count} />
+          <View style={styles.statDivider} />
+          <StatItem label="Credits" value={profile.credits || 0} />
         </View>
       </View>
 
@@ -69,17 +71,20 @@ export default function ProfileScreen() {
         </View>
       )}
 
+      {/* Primary Actions Group */}
+      <View style={styles.settingsGroup}>
+        <MenuRow icon="diamond" label="Buy Credits" iconColor={COLORS.gold} onPress={() => router.push('/buy-credits')} />
+        <MenuRow icon="library-outline" label={t('tabs.library') || "My Library"} iconColor={COLORS.textPrimary} onPress={() => router.push('/library')} />
+        <MenuRow icon="person-outline" label={t('profile.edit_profile')} iconColor={COLORS.textPrimary} onPress={() => router.push('/settings/edit-profile')} isLast />
+      </View>
+
       {/* Settings section */}
       <Text style={styles.sectionTitle}>{t('profile.settings')}</Text>
-
-      {profile.role === 'artist' && (
-        <MenuRow icon="hardware-chip-outline" label="AI Music Studio" onPress={() => router.push('/ai-studio')} />
-      )}
-
-      <MenuRow icon="person-outline" label={t('profile.edit_profile')} onPress={() => router.push('/settings/edit-profile')} />
-      <MenuRow icon="notifications-outline" label={t('profile.notifications')} onPress={() => router.push('/settings/notifications')} />
-      <MenuRow icon="language-outline" label={t('settings.language')} onPress={() => router.push('/settings/language')} />
-      <MenuRow icon="information-circle-outline" label={t('profile.about')} onPress={() => router.push('/settings/about')} />
+      <View style={styles.settingsGroup}>
+        <MenuRow icon="notifications-outline" label={t('profile.notifications')} iconColor={COLORS.textSecondary} onPress={() => router.push('/settings/notifications')} />
+        <MenuRow icon="language-outline" label={t('settings.language')} iconColor={COLORS.textSecondary} onPress={() => router.push('/settings/language')} />
+        <MenuRow icon="information-circle-outline" label={t('profile.about')} iconColor={COLORS.textSecondary} onPress={() => router.push('/settings/about')} isLast />
+      </View>
 
       <TouchableOpacity style={styles.signOutBtn} onPress={handleSignOut}>
         <Ionicons name="log-out-outline" size={20} color={COLORS.error} />
@@ -98,12 +103,14 @@ function StatItem({ label, value }: { label: string; value: number }) {
   );
 }
 
-function MenuRow({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
+function MenuRow({ icon, label, onPress, iconColor, isLast }: { icon: string; label: string; onPress: () => void, iconColor: string, isLast?: boolean }) {
   return (
-    <TouchableOpacity style={styles.menuRow} onPress={onPress}>
-      <Ionicons name={icon as any} size={20} color={COLORS.textSecondary} />
+    <TouchableOpacity style={[styles.menuRow, isLast && styles.menuRowLast]} onPress={onPress}>
+      <View style={styles.menuIconBox}>
+        <Ionicons name={icon as any} size={20} color={iconColor} />
+      </View>
       <Text style={styles.menuLabel}>{label}</Text>
-      <Ionicons name="chevron-forward" size={16} color={COLORS.textTertiary} />
+      <Ionicons name="chevron-forward" size={18} color={COLORS.textTertiary} />
     </TouchableOpacity>
   );
 }
@@ -125,11 +132,14 @@ const styles = StyleSheet.create({
   bio: { color: COLORS.textSecondary, fontSize: 14, textAlign: 'center', marginHorizontal: 24, marginTop: 12, lineHeight: 20 },
   locationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4, marginTop: 8 },
   location: { color: COLORS.textTertiary, fontSize: 13 },
-  sectionTitle: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginHorizontal: 16, marginTop: 28, marginBottom: 8 },
-  menuRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.card, marginHorizontal: 16, marginBottom: 2, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
-  menuLabel: { flex: 1, color: COLORS.textPrimary, fontSize: 15 },
-  signOutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 16, marginTop: 20, padding: 14, borderRadius: 12, borderWidth: 1, borderColor: COLORS.error, gap: 8 },
-  signOutText: { color: COLORS.error, fontSize: 15, fontWeight: '700' },
+  sectionTitle: { color: COLORS.textSecondary, fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.2, marginHorizontal: 24, marginTop: 32, marginBottom: 8 },
+  settingsGroup: { backgroundColor: COLORS.card, borderRadius: 20, marginHorizontal: 16, marginTop: 12, overflow: 'hidden', borderWidth: 1, borderColor: COLORS.divider },
+  menuRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 16, gap: 16, borderBottomWidth: 1, borderBottomColor: COLORS.divider },
+  menuRowLast: { borderBottomWidth: 0 },
+  menuIconBox: { width: 38, height: 38, borderRadius: 12, backgroundColor: COLORS.cardAlt, justifyContent: 'center', alignItems: 'center' },
+  menuLabel: { flex: 1, color: COLORS.textPrimary, fontSize: 16, fontWeight: '600' },
+  signOutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginHorizontal: 16, marginTop: 32, padding: 16, borderRadius: 20, backgroundColor: 'rgba(255, 60, 60, 0.1)', borderWidth: 1, borderColor: 'rgba(255, 60, 60, 0.3)', gap: 8 },
+  signOutText: { color: COLORS.error, fontSize: 16, fontWeight: '700' },
   noAuth: { flex: 1, backgroundColor: COLORS.black, justifyContent: 'center', alignItems: 'center', gap: 12 },
   noAuthTitle: { color: COLORS.textPrimary, fontSize: 22, fontWeight: '700' },
   noAuthText: { color: COLORS.textSecondary, fontSize: 14 },

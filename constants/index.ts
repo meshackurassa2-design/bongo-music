@@ -56,6 +56,7 @@ export type Profile = {
   follower_count: number;
   following_count: number;
   track_count: number;
+  credits: number;
 };
 
 export type Comment = {

@@ -4,9 +4,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useAuthStore } from '../store/authStore';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ThemeProvider, DarkTheme } from '@react-navigation/native';
-import { StyleSheet } from 'react-native';
+import { StyleSheet, LogBox } from 'react-native';
 import AnimatedSplash from '../components/AnimatedSplash';
 import '../i18n';
+
+// Ignore harmless background Supabase auth network errors in dev mode
+LogBox.ignoreLogs(['TypeError: Network request failed']);
 
 const customTheme = {
   ...DarkTheme,
@@ -48,6 +51,7 @@ export default function RootLayout() {
           <Stack.Screen name="auth" />
           <Stack.Screen name="track/[id]" options={{ presentation: 'modal' }} />
           <Stack.Screen name="player" options={{ presentation: 'modal' }} />
+          <Stack.Screen name="buy-credits" options={{ presentation: 'modal' }} />
           <Stack.Screen name="artist/[id]" />
           <Stack.Screen name="genre/[name]" />
         </Stack>

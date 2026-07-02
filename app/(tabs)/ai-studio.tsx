@@ -5,15 +5,14 @@ import { decode } from 'base64-arraybuffer';
 import { Stack, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
-import { supabase } from '../lib/supabase';
-import { generateMusic, getTaskInfo, SunoAudioData, SunoTaskStatus } from '../lib/sunoApi';
-import { useAIStore, AISongTask } from '../store/aiStore';
-import { useAuthStore } from '../store/authStore';
-import { usePlayerStore } from '../store/playerStore';
-import { COLORS } from '../constants';
-import MiniPlayer from '../components/MiniPlayer';
+import { supabase } from '../../lib/supabase';
+import { generateMusic, getTaskInfo, SunoAudioData, SunoTaskStatus } from '../../lib/sunoApi';
+import { useAIStore, AISongTask } from '../../store/aiStore';
+import { useAuthStore } from '../../store/authStore';
+import { usePlayerStore } from '../../store/playerStore';
+import { COLORS } from '../../constants';
 
 export default function AIStudioScreen() {
   const router = useRouter();
@@ -37,14 +36,30 @@ export default function AIStudioScreen() {
       Alert.alert("Missing Fields", "Please fill out title, style, and lyrics.");
       return;
     }
+    if ((profile?.credits || 0) < 12) {
+      Alert.alert(
+        "Not Enough Credits", 
+        "You need 12 credits to generate a song.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Buy Credits", onPress: () => router.push('/buy-credits') }
+        ]
+      );
+      return;
+    }
     setIsGenerating(true);
     try {
+      const { data, error } = await supabase.rpc('deduct_credits', { user_id: session?.user.id, amount: 12 });
+      if (error || !data) throw new Error("Failed to deduct credits");
+      
       const taskId = await generateMusic(lyrics, style, title);
       addTask(taskId, title);
       setTitle('');
       setStyle('');
       setLyrics('');
       setActiveTab('Workspace');
+      // Refresh profile to update local state
+      if (session?.user.id) useAuthStore.getState().fetchProfile(session.user.id);
     } catch (e: any) {
       Alert.alert("Error", e.message);
     } finally {
@@ -62,7 +77,10 @@ export default function AIStudioScreen() {
           <Ionicons name="chevron-back" size={28} color={COLORS.textPrimary} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>AI Studio</Text>
-        <View style={{ width: 28 }} />
+        <TouchableOpacity style={styles.creditBadge} onPress={() => router.push('/buy-credits')}>
+          <Ionicons name="diamond" size={14} color={COLORS.gold} />
+          <Text style={styles.creditText}>{profile?.credits || 0}</Text>
+        </TouchableOpacity>
       </View>
       
       {/* Tabs */}
@@ -109,13 +127,13 @@ export default function AIStudioScreen() {
         </ScrollView>
       )}
       
-      {/* Show global MiniPlayer if a song is playing */}
-      {currentTrack && <MiniPlayer />}
+
     </SafeAreaView>
   );
 }
 
 function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDownloading }: { task: AISongTask, isPublishing: any, setIsPublishing: any, isDownloading: any, setIsDownloading: any }) {
+  const router = useRouter();
   const { updateTask, removeTask } = useAIStore();
   const [pollError, setPollError] = useState<string | null>(null);
 
@@ -127,10 +145,10 @@ function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDow
           const info = await getTaskInfo(task.taskId);
           setPollError(null);
           
-          const hasTracks = info.data && info.data.length > 0 && (info.data[0].audioUrl || info.data[0].streamAudioUrl);
+          const hasTracks = info.data && info.data.length > 0 && (info.data[0].sourceAudioUrl || info.data[0].audioUrl || info.data[0].streamAudioUrl);
           
           if (hasTracks) {
-             const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl }));
+             const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl || t.sourceAudioUrl }));
              updateTask(task.taskId, 'SUCCESS', mappedData);
           } else if (info.status === 'SENSITIVE_WORD_ERROR') {
              updateTask(task.taskId, 'SENSITIVE_WORD_ERROR');
@@ -150,9 +168,9 @@ function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDow
   const manualCheck = async () => {
     try {
       const info = await getTaskInfo(task.taskId);
-      const hasTracks = info.data && info.data.length > 0 && (info.data[0].audioUrl || info.data[0].streamAudioUrl);
+      const hasTracks = info.data && info.data.length > 0 && (info.data[0].sourceAudioUrl || info.data[0].audioUrl || info.data[0].streamAudioUrl);
       if (hasTracks) {
-        const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl }));
+        const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl || t.sourceAudioUrl }));
         updateTask(task.taskId, 'SUCCESS', mappedData);
       } else if (info.status === 'SENSITIVE_WORD_ERROR') {
         updateTask(task.taskId, 'SENSITIVE_WORD_ERROR');
@@ -165,16 +183,36 @@ function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDow
   };
 
   const handlePlay = async (track: SunoAudioData) => {
+    let playTrackData = track;
+    if (track.audioUrl?.includes('cdn1.suno.ai') || track.audioUrl?.includes('tempfile.aiquickdraw.com')) {
+      try {
+        const info = await getTaskInfo(task.taskId);
+        if (info.data && info.data.length > 0) {
+          const freshTrack = info.data.find(t => t.id === track.id);
+          if (freshTrack) {
+            playTrackData = { ...freshTrack, audioUrl: freshTrack.audioUrl || freshTrack.streamAudioUrl || freshTrack.sourceAudioUrl } as any;
+            // update in background
+            const mappedData = info.data.map((t: any) => ({ ...t, audioUrl: t.audioUrl || t.streamAudioUrl || t.sourceAudioUrl }));
+            updateTask(task.taskId, 'SUCCESS', mappedData);
+          }
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    const { profile } = useAuthStore.getState();
     const aiTrack = {
-      id: track.id,
-      audio_url: track.audioUrl,
-      title: track.title || task.title,
-      artist_name: 'AI Generated',
-      cover_url: track.imageUrl || 'https://via.placeholder.com/150',
-      duration: Math.floor(track.duration || 0),
+      id: playTrackData.id,
+      audio_url: playTrackData.audioUrl,
+      title: playTrackData.title || task.title,
+      artist_name: profile?.display_name || 'AI Generated',
+      cover_url: playTrackData.imageUrl || 'https://via.placeholder.com/150',
+      duration: Math.floor(playTrackData.duration || 0),
       play_count: 0
     };
     await usePlayerStore.getState().playTrack(aiTrack as any);
+    router.push('/player');
   };
 
   const handlePublish = async (track: SunoAudioData) => {
@@ -267,30 +305,36 @@ function TaskItem({ task, isPublishing, setIsPublishing, isDownloading, setIsDow
       ) : Array.isArray(task.tracks) && task.tracks.length > 0 ? (
         task.tracks.map(track => (
           <View key={track.id} style={styles.trackRow}>
-            <Image source={{ uri: track.imageUrl }} style={styles.trackImg} cachePolicy="memory-disk" />
-            <View style={{ flex: 1 }}>
-               <Text style={styles.trackTitle}>{track.title || "AI Generated"}</Text>
-               <View style={styles.trackActions}>
-                  <TouchableOpacity style={styles.actionBtn} onPress={() => handlePlay(track)}>
-                    <Ionicons name="play" size={16} color={COLORS.black} />
-                    <Text style={styles.actionText}>Play</Text>
-                  </TouchableOpacity>
-                  
-                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.cardAlt, flex: 0.5 }]} onPress={() => handleDownload(track)}>
-                    {isDownloading[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
-                      <Ionicons name="download" size={16} color={COLORS.textPrimary} />
-                    )}
-                  </TouchableOpacity>
+            <TouchableOpacity onPress={() => handlePlay(track)}>
+              <Image source={{ uri: track.imageUrl }} style={styles.trackImg} cachePolicy="memory-disk" />
+            </TouchableOpacity>
+            
+            <View style={{ flex: 1, justifyContent: 'space-between' }}>
+              <TouchableOpacity onPress={() => handlePlay(track)}>
+                <Text style={styles.trackTitle}>{track.title || "AI Generated"}</Text>
+              </TouchableOpacity>
+              
+              <View style={styles.trackActions}>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => handlePlay(track)}>
+                  <Ionicons name="play" size={16} color={COLORS.black} />
+                  <Text style={styles.actionText}>Play</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.cardAlt }]} onPress={() => handlePublish(track)}>
+                  {isPublishing[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
+                    <>
+                      <Ionicons name="cloud-upload" size={16} color={COLORS.gold} />
+                      <Text style={[styles.actionText, { color: COLORS.textPrimary }]}>Publish</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
 
-                  <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.cardAlt }]} onPress={() => handlePublish(track)}>
-                    {isPublishing[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
-                      <>
-                        <Ionicons name="cloud-upload" size={16} color={COLORS.gold} />
-                        <Text style={[styles.actionText, { color: COLORS.textPrimary }]}>Publish</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-               </View>
+                <TouchableOpacity style={styles.iconBtn} onPress={() => handleDownload(track)}>
+                  {isDownloading[track.id] ? <ActivityIndicator size="small" color={COLORS.textPrimary} /> : (
+                    <Ionicons name="download-outline" size={20} color={COLORS.textPrimary} />
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         ))
@@ -317,6 +361,8 @@ const styles = StyleSheet.create({
   textArea: { height: 180 },
   generateBtn: { backgroundColor: COLORS.gold, paddingVertical: 16, borderRadius: 30, alignItems: 'center', marginTop: 24, marginBottom: 40 },
   generateBtnText: { color: COLORS.black, fontSize: 16, fontWeight: '700' },
+  creditBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.cardAlt, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 16, gap: 4 },
+  creditText: { color: COLORS.gold, fontSize: 13, fontWeight: 'bold' },
   emptyText: { color: COLORS.textTertiary, textAlign: 'center', marginTop: 40 },
   taskCard: { backgroundColor: COLORS.card, borderRadius: 12, padding: 16, marginBottom: 16 },
   taskHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
@@ -326,7 +372,8 @@ const styles = StyleSheet.create({
   trackRow: { flexDirection: 'row', marginTop: 12, gap: 12, backgroundColor: COLORS.cardAlt, padding: 8, borderRadius: 8 },
   trackImg: { width: 60, height: 60, borderRadius: 8 },
   trackTitle: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '600', marginBottom: 8 },
-  trackActions: { flexDirection: 'row', gap: 8 },
-  actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: COLORS.gold, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16 },
-  actionText: { color: COLORS.black, fontSize: 12, fontWeight: '700' },
+  trackActions: { flexDirection: 'row', gap: 10, marginTop: 4 },
+  actionBtn: { flex: 1, height: 38, backgroundColor: COLORS.gold, borderRadius: 19, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: COLORS.cardAlt, justifyContent: 'center', alignItems: 'center' },
+  actionText: { color: COLORS.black, fontSize: 13, fontWeight: '700' },
 });
