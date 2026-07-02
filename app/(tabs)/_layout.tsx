@@ -66,6 +66,13 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
+          name="library"
+          options={{
+            title: "Library",
+            tabBarIcon: ({ color }) => <TabBarIcon name="library" color={color} />,
+          }}
+        />
+        <Tabs.Screen
           name="profile"
           options={{
             title: t('tabs.profile'),
