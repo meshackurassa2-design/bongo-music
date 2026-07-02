@@ -40,7 +40,8 @@
       [
         "expo-document-picker",
         { "iCloudContainerEnvironment": "Production" }
-      ]
+      ],
+      "react-native-purchases"
     ],
     "experiments": {
       "typedRoutes": true

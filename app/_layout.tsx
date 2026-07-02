@@ -7,6 +7,8 @@ import { ThemeProvider, DarkTheme } from '@react-navigation/native';
 import { StyleSheet, LogBox } from 'react-native';
 import AnimatedSplash from '../components/AnimatedSplash';
 import '../i18n';
+import { initRevenueCat, loginRevenueCat, logoutRevenueCat } from '../lib/revenuecat';
+import { useOfflineStore } from '../store/offlineStore';
 
 // Ignore harmless background Supabase auth network errors in dev mode
 LogBox.ignoreLogs(['TypeError: Network request failed']);
@@ -25,7 +27,14 @@ export default function RootLayout() {
   const router = useRouter();
 
   useEffect(() => {
-    init();
+    // Initialize Auth Store
+    useAuthStore.getState().init();
+    
+    // Initialize RevenueCat
+    initRevenueCat();
+
+    // Check offline songs
+    useOfflineStore.getState().init();
   }, []);
 
   useEffect(() => {
@@ -38,6 +47,14 @@ export default function RootLayout() {
       router.replace('/');
     }
   }, [session, isLoading, segments]);
+
+  useEffect(() => {
+    if (session?.user) {
+      loginRevenueCat(session.user.id);
+    } else {
+      logoutRevenueCat();
+    }
+  }, [session]);
 
   // We no longer return null here, we let the app mount behind the splash screen
   // if (isLoading) return null;

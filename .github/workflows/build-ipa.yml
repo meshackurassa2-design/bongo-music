@@ -9,7 +9,7 @@ on:
 jobs:
   build-ios:
     name: Build Unsigned IPA
-    runs-on: macos-latest
+    runs-on: macos-13
     
     steps:
       - name: Checkout Repository
@@ -19,6 +19,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18.x
+
+      - name: Fix Node Path for Xcode
+        run: sudo ln -s $(which node) /usr/local/bin/node
 
       - name: Install dependencies
         run: npm install --legacy-peer-deps
@@ -34,7 +37,7 @@ jobs:
       - name: Build Unsigned App with xcodebuild
         run: |
           cd ios
-          xcodebuild -workspace BongoStream.xcworkspace -scheme BongoStream -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          xcodebuild -workspace BongoStream.xcworkspace -scheme BongoStream -configuration Release -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" ENTITLEMENTS_REQUIRED=NO COMPILER_INDEX_STORE_ENABLE=NO build
 
       - name: Package App into IPA
         run: |
